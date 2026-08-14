@@ -100,7 +100,7 @@
 <div id="map"></div>
 
 <div id="topbar">
-  <div id="title">Bohnice–Troja · 4,3 km</div>
+  <div id="title">Trasa</div>
   <div id="status" class="online"><div class="dot"></div><span id="statusText">online</span></div>
 </div>
 
@@ -219,6 +219,7 @@ function loadRoute(points){
 
   const km = (routeLength(points)/1000).toFixed(1);
   document.getElementById('statRoute').textContent = km + ' km';
+  document.getElementById('title').textContent = km.replace('.', ',') + ' km';
 
   const {gain} = eleGainLoss(points);
   const eleMin = Math.min(...points.map(p=>p[2]||0));
