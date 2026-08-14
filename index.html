@@ -93,6 +93,18 @@
     opacity:0; transition:opacity 0.3s; pointer-events:none; text-align:center; max-width:80%;
   }
   #toast.show{ opacity:1; }
+
+  #onlinePrompt{
+    display:none;
+    position:absolute; top:56px; left:12px; right:12px; z-index:2000;
+    background:var(--panel); border:1px solid var(--panel-border);
+    border-radius:10px; padding:10px 12px;
+    align-items:center; justify-content:space-between; gap:10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  #onlinePromptText{ font-size:11px; color:var(--text); flex:1; }
+  #onlinePromptBtns{ display:flex; gap:6px; }
+  #onlinePromptBtns .btn{ padding:8px 10px; min-width:auto; min-height:auto; font-size:11px; }
 </style>
 </head>
 <body>
@@ -105,6 +117,14 @@
 </div>
 
 <div id="toast"></div>
+
+<div id="onlinePrompt">
+  <div id="onlinePromptText">Část mapy chybí lokálně. Stáhnout ji online?</div>
+  <div id="onlinePromptBtns">
+    <div class="btn" id="onlineYes">Ano</div>
+    <div class="btn secondary" id="onlineNo">Ne</div>
+  </div>
+</div>
 
 <div id="panel">
   <div class="stat">
@@ -143,29 +163,42 @@ const TILE_MAX_ZOOM = 17;
 
 const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([DEFAULT_ROUTE[0][0], DEFAULT_ROUTE[0][1]], 14);
 
-const localLayer = L.tileLayer(LOCAL_TILES, {
-  minZoom: TILE_MIN_ZOOM, maxZoom: 19, maxNativeZoom: TILE_MAX_ZOOM,
-  attribution: 'Mapová data © OpenStreetMap contributors, turistické trasy Freemap.sk',
-  errorTileUrl: ''
-});
 const onlineLayer = L.tileLayer(ONLINE_TILES, {
   minZoom: TILE_MIN_ZOOM, maxZoom: 19, maxNativeZoom: TILE_MAX_ZOOM,
   attribution: 'Mapová data © OpenStreetMap contributors, turistické trasy Freemap.sk'
 });
-
-// Zkusíme nejdřív lokální dlaždice; pokud chybí, prohlížeč si sáhne na online vrstvu.
-localLayer.addTo(map);
-let usingLocal = true;
-let localFailCount = 0;
-localLayer.on('tileerror', () => {
-  localFailCount++;
-  if (usingLocal && localFailCount > 6) {
-    usingLocal = false;
-    map.removeLayer(localLayer);
-    onlineLayer.addTo(map);
-    showToast('Lokální dlaždice nenalezeny — používám online mapu');
-  }
+// Průhledná 1×1 dlaždice — když lokální soubor chybí, tahle vrstva zmizí
+// a prosvitne online vrstva pod ní, místo aby spadla chyba.
+const TRANSPARENT_TILE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+const localLayer = L.tileLayer(LOCAL_TILES, {
+  minZoom: TILE_MIN_ZOOM, maxZoom: 19, maxNativeZoom: TILE_MAX_ZOOM,
+  attribution: 'Mapová data © OpenStreetMap contributors, turistické trasy Freemap.sk',
+  errorTileUrl: TRANSPARENT_TILE
 });
+
+// Online vrstva se přidá jen po odsouhlasení uživatelem (viz prompt níže) —
+// dokud nepotvrdí, mapa se snaží jet čistě z lokálních dlaždic.
+let onlineDecision = null; // null = nezeptáno, true/false = rozhodnuto pro tuhle relaci
+let onlinePromptShown = false;
+
+function showOnlinePrompt(){
+  if(onlineDecision !== null || onlinePromptShown) return;
+  onlinePromptShown = true;
+  document.getElementById('onlinePrompt').style.display = 'flex';
+}
+document.getElementById('onlineYes').addEventListener('click', () => {
+  onlineDecision = true;
+  onlineLayer.addTo(map);
+  onlineLayer.bringToBack();
+  document.getElementById('onlinePrompt').style.display = 'none';
+});
+document.getElementById('onlineNo').addEventListener('click', () => {
+  onlineDecision = false;
+  document.getElementById('onlinePrompt').style.display = 'none';
+});
+
+localLayer.addTo(map);
+localLayer.on('tileerror', showOnlinePrompt);
 
 // ---- Vykreslení trasy ----
 let routeLine = null;
