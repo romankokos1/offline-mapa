@@ -222,6 +222,13 @@ let routePoints = [];
 let startMarker = null;
 let endMarker = null;
 
+// Deklarováno předem, protože updateDistanceToEnd() se volá už z loadRoute()
+// hned při startu stránky — kdyby byly tyhle proměnné dál, spadlo by to na
+// "Cannot access uninitialized variable" ještě předtím, než se stránka vůbec rozjede.
+let meMarker = null;
+let accuracyCircle = null;
+let watchId = null;
+
 function haversine(a, b){
   const R = 6371000;
   const toRad = d => d * Math.PI / 180;
@@ -307,9 +314,6 @@ document.getElementById('loadgpx').addEventListener('change', (e) => {
 });
 
 // ---- Poloha ----
-let meMarker = null;
-let accuracyCircle = null;
-let watchId = null;
 
 function updateDistanceToEnd(){
   if(!meMarker || routePoints.length === 0) return;
