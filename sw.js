@@ -1,6 +1,6 @@
 // Service worker — cache-first pro stránku a dlaždice.
 // Verzi zvyš (v2, v3, ...) když upravíš stránku, jinak si prohlížeč nechá starou cache.
-const CACHE_NAME = 'offline-mapa-v1';
+const CACHE_NAME = 'offline-mapa-v4';
 const CORE_ASSETS = [
   './',
   './index.html',
