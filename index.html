@@ -62,6 +62,16 @@
   .stat .label{ font-size:9px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; }
   .stat .value{ font-size:15px; color:var(--text); font-variant-numeric: tabular-nums; }
   .stat .value.accent{ color:var(--accent); }
+  .stat .value-sub{ font-size:10px; color:var(--text-dim); margin-top:1px; }
+
+  #profileDrawer{
+    position:absolute; left:12px; right:12px; bottom:96px; z-index:999;
+    background:var(--panel); border:1px solid var(--panel-border);
+    border-radius:12px; padding:8px 10px;
+    display:none; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  #profileDrawer.show{ display:block; }
+  #profileDrawer svg{ display:block; width:100%; height:70px; }
 
   #btns{ display:flex; gap:8px; }
   .btn{
@@ -105,9 +115,62 @@
   #onlinePromptText{ font-size:11px; color:var(--text); flex:1; }
   #onlinePromptBtns{ display:flex; gap:6px; }
   #onlinePromptBtns .btn{ padding:8px 10px; min-width:auto; min-height:auto; font-size:11px; }
+
+  #settingsOverlay{
+    position:fixed; inset:0; z-index:3000;
+    background:rgba(10,12,14,0.92);
+    display:flex; align-items:center; justify-content:center;
+    padding:20px;
+  }
+  #settingsOverlay.hidden{ display:none; }
+  #settingsCard{
+    background:var(--panel); border:1px solid var(--panel-border);
+    border-radius:14px; padding:20px; max-width:340px; width:100%;
+  }
+  #settingsCard h2{ font-size:14px; margin:0 0 4px; color:var(--text); font-weight:normal; }
+  #settingsCard .sub{ font-size:11px; color:var(--text-dim); margin-bottom:16px; }
+  .setting-row{
+    display:flex; align-items:center; gap:10px;
+    padding:10px 0; border-top:1px solid var(--panel-border);
+  }
+  .setting-row:first-of-type{ border-top:none; }
+  .setting-row input[type="checkbox"]{
+    width:18px; height:18px; accent-color: var(--accent); flex-shrink:0;
+  }
+  .setting-row label{ font-size:12px; color:var(--text); flex:1; }
+  .setting-row .desc{ font-size:10px; color:var(--text-dim); display:block; margin-top:2px; }
+  #settingsStart{
+    margin-top:16px; text-align:center; padding:12px; font-size:13px;
+  }
 </style>
 </head>
 <body>
+
+<div id="settingsOverlay">
+  <div id="settingsCard">
+    <h2>Než vyrazíš</h2>
+    <div class="sub">Zapni si, co chceš mít v terénu aktivní.</div>
+    <div class="setting-row">
+      <input type="checkbox" id="setOffRoute" checked>
+      <label for="setOffRoute">Upozornit při odchýlení od trasy
+        <span class="desc">zvuk + banner, když jsi &gt;50 m od trasy</span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <input type="checkbox" id="setEta" checked>
+      <label for="setEta">Odhad času do cíle
+        <span class="desc">počítá se z tvého tempa</span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <input type="checkbox" id="setProfile" checked>
+      <label for="setProfile">Výškový profil
+        <span class="desc">tlačítko ⛰ s grafem trasy</span>
+      </label>
+    </div>
+    <div class="btn" id="settingsStart">Jedeme</div>
+  </div>
+</div>
 
 <div id="map"></div>
 
@@ -126,6 +189,8 @@
   </div>
 </div>
 
+<div id="profileDrawer"></div>
+
 <div id="panel">
   <div class="stat">
     <div class="label">Trasa</div>
@@ -134,6 +199,7 @@
   <div class="stat">
     <div class="label">K cíli</div>
     <div class="value accent" id="statToEnd">–</div>
+    <div class="value-sub" id="statEta">–</div>
   </div>
   <div class="stat">
     <div class="label">Nadm. výška</div>
@@ -142,6 +208,7 @@
   <div id="btns">
     <label class="btn secondary" for="loadgpx">GPX</label>
     <input type="file" id="loadgpx" accept=".gpx" />
+    <div class="btn secondary" id="profileBtn">⛰</div>
     <div class="btn" id="locateBtn">◎</div>
   </div>
 </div>
@@ -228,6 +295,43 @@ let endMarker = null;
 let meMarker = null;
 let accuracyCircle = null;
 let watchId = null;
+let paceHistory = [];
+let audioCtx = null;
+let wasOffRoute = false;
+let lastOffRouteWarnTime = 0;
+
+// ---- Zapnuté/vypnuté funkce (podle volby v úvodním dialogu) ----
+// Poslední volba se pamatuje v localStorage, ať se příště jen potvrzuje.
+let featureOffRoute = true;
+let featureEta = true;
+let featureProfile = true;
+
+try{
+  const saved = JSON.parse(localStorage.getItem('mapa-nastaveni') || 'null');
+  if(saved){
+    featureOffRoute = saved.offRoute !== false;
+    featureEta = saved.eta !== false;
+    featureProfile = saved.profile !== false;
+  }
+}catch(e){}
+
+document.getElementById('setOffRoute').checked = featureOffRoute;
+document.getElementById('setEta').checked = featureEta;
+document.getElementById('setProfile').checked = featureProfile;
+
+document.getElementById('settingsStart').addEventListener('click', () => {
+  featureOffRoute = document.getElementById('setOffRoute').checked;
+  featureEta = document.getElementById('setEta').checked;
+  featureProfile = document.getElementById('setProfile').checked;
+  try{
+    localStorage.setItem('mapa-nastaveni', JSON.stringify({
+      offRoute: featureOffRoute, eta: featureEta, profile: featureProfile
+    }));
+  }catch(e){}
+  document.getElementById('settingsOverlay').classList.add('hidden');
+  document.getElementById('profileBtn').style.display = featureProfile ? '' : 'none';
+  if(!featureEta) document.getElementById('statEta').textContent = '';
+});
 
 function haversine(a, b){
   const R = 6371000;
@@ -244,6 +348,53 @@ function routeLength(points){
   let d = 0;
   for(let i=1;i<points.length;i++) d += haversine(points[i-1], points[i]);
   return d;
+}
+
+// ---- Geometrie trasy: pro odhad odchylky od trasy, ETA a výškový profil ----
+// Body trasy si předpočítáme do lokálních metrů (jednoduchá rovinná projekce —
+// pro trasu v řádu kilometrů je zakřivení Země zanedbatelné), ať nemusíme
+// při každé aktualizaci polohy počítat s trigonometrií dokola.
+let routeXY = [];
+let routeCumDist = [];
+
+function computeRouteGeometry(points){
+  const refLat = points[0][0];
+  const refLon = points[0][1];
+  const R = 6371000;
+  routeXY = points.map(p => ({
+    x: (p[1]-refLon) * Math.PI/180 * R * Math.cos(refLat*Math.PI/180),
+    y: (p[0]-refLat) * Math.PI/180 * R
+  }));
+  routeCumDist = [0];
+  for(let i=1;i<points.length;i++){
+    routeCumDist.push(routeCumDist[i-1] + haversine([points[i-1][0],points[i-1][1]], [points[i][0],points[i][1]]));
+  }
+}
+
+// Najde nejbližší bod na trase (na kterékoli úsečce, ne jen na vrcholu) k dané poloze.
+// Vrací vzdálenost od trasy v metrech a kumulativní vzdálenost od startu k tomu bodu.
+function nearestOnRoute(lat, lon){
+  if(routePoints.length < 2 || routeXY.length < 2) return null;
+  const refLat = routePoints[0][0];
+  const refLon = routePoints[0][1];
+  const R = 6371000;
+  const px = (lon-refLon) * Math.PI/180 * R * Math.cos(refLat*Math.PI/180);
+  const py = (lat-refLat) * Math.PI/180 * R;
+  let best = null;
+  for(let i=1;i<routeXY.length;i++){
+    const a = routeXY[i-1], b = routeXY[i];
+    const dx = b.x-a.x, dy = b.y-a.y;
+    const len2 = dx*dx+dy*dy;
+    let t = len2 === 0 ? 0 : ((px-a.x)*dx + (py-a.y)*dy)/len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = a.x + t*dx, cy = a.y + t*dy;
+    const dist = Math.hypot(px-cx, py-cy);
+    if(!best || dist < best.dist){
+      const segLen = Math.sqrt(len2);
+      best = { dist, cum: routeCumDist[i-1] + t*segLen };
+    }
+  }
+  return best;
 }
 
 function eleGainLoss(points){
@@ -282,8 +433,52 @@ function loadRoute(points){
   const eleMax = Math.max(...points.map(p=>p[2]||0));
   document.getElementById('statEle').textContent = `${Math.round(eleMin)}–${Math.round(eleMax)} m`;
 
+  computeRouteGeometry(points);
+  renderElevationProfile(points);
+  paceHistory = [];
+
   updateDistanceToEnd();
 }
+
+// ---- Výškový profil ----
+// Vykreslí se jednou při načtení trasy do skryté zásuvky (#profileDrawer),
+// zobrazí se po klepnutí na tlačítko ⛰. Svislá čárka ukazuje, kde na profilu
+// právě jsi (podle nejbližšího bodu na trase k tvé GPS poloze).
+const PROFILE_W = 600, PROFILE_H = 70, PROFILE_PAD = 4;
+
+function renderElevationProfile(points){
+  const total = routeCumDist[routeCumDist.length-1] || 1;
+  const eles = points.map(p => p[2]||0);
+  const eleMin = Math.min(...eles), eleMax = Math.max(...eles);
+  const eleRange = Math.max(1, eleMax - eleMin);
+
+  const xAt = (cum) => PROFILE_PAD + (cum/total) * (PROFILE_W - 2*PROFILE_PAD);
+  const yAt = (ele) => PROFILE_H - PROFILE_PAD - ((ele-eleMin)/eleRange) * (PROFILE_H - 2*PROFILE_PAD);
+
+  const linePts = points.map((p,i) => `${xAt(routeCumDist[i]).toFixed(1)},${yAt(p[2]||0).toFixed(1)}`).join(' ');
+  const areaPts = `${PROFILE_PAD},${PROFILE_H-PROFILE_PAD} ${linePts} ${PROFILE_W-PROFILE_PAD},${PROFILE_H-PROFILE_PAD}`;
+
+  document.getElementById('profileDrawer').innerHTML = `
+    <svg viewBox="0 0 ${PROFILE_W} ${PROFILE_H}" preserveAspectRatio="none">
+      <polygon points="${areaPts}" fill="#4fc3a1" opacity="0.15"></polygon>
+      <polyline points="${linePts}" fill="none" stroke="#4fc3a1" stroke-width="2"></polyline>
+      <line id="profileMarker" x1="${PROFILE_PAD}" y1="0" x2="${PROFILE_PAD}" y2="${PROFILE_H}" stroke="#4a7fd9" stroke-width="2" stroke-dasharray="3,3"></line>
+    </svg>`;
+}
+
+function updateProfileMarker(cumNow){
+  const total = routeCumDist[routeCumDist.length-1] || 1;
+  const x = (PROFILE_PAD + (cumNow/total) * (PROFILE_W - 2*PROFILE_PAD)).toFixed(1);
+  const marker = document.getElementById('profileMarker');
+  if(marker){ marker.setAttribute('x1', x); marker.setAttribute('x2', x); }
+}
+
+document.getElementById('profileBtn').addEventListener('click', () => {
+  document.getElementById('profileDrawer').classList.toggle('show');
+});
+
+document.getElementById('profileBtn').style.display = featureProfile ? '' : 'none';
+if(!featureEta) document.getElementById('statEta').textContent = '';
 
 loadRoute(DEFAULT_ROUTE);
 
@@ -337,6 +532,70 @@ function onPosition(pos){
     accuracyCircle.setRadius(accuracy);
   }
   updateDistanceToEnd();
+
+  const nearest = nearestOnRoute(latitude, longitude);
+  if(nearest){
+    if(featureProfile) updateProfileMarker(nearest.cum);
+    if(featureOffRoute) checkOffRoute(nearest.dist);
+    if(featureEta) updateEta(nearest.cum);
+  }
+}
+
+// Upozornění, když se vzdálíš od trasy — vizuální banner + zvukový signál.
+// (Vibrace přes navigator.vibrate na iOS Safari nefunguje, proto primárně zvuk.)
+const OFF_ROUTE_THRESHOLD = 50; // metrů
+const OFF_ROUTE_COOLDOWN = 60000; // needráždit častěji než jednou za minutu
+
+function checkOffRoute(distFromRoute){
+  if(distFromRoute > OFF_ROUTE_THRESHOLD){
+    const now = Date.now();
+    if(!wasOffRoute || now - lastOffRouteWarnTime > OFF_ROUTE_COOLDOWN){
+      showToast('Jsi ' + Math.round(distFromRoute) + ' m od trasy');
+      if(navigator.vibrate) navigator.vibrate([200,100,200]);
+      playBeep();
+      lastOffRouteWarnTime = now;
+    }
+    wasOffRoute = true;
+  } else {
+    wasOffRoute = false;
+  }
+}
+
+function playBeep(){
+  try{
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.frequency.value = 880;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.25);
+  }catch(e){}
+}
+
+// Odhad zbývajícího času — z tempa za posledních ~3 minut chůze podél trasy.
+function updateEta(cumNow){
+  const total = routeCumDist[routeCumDist.length-1] || 0;
+  const remaining = Math.max(0, total - cumNow);
+  paceHistory.push({ t: Date.now(), cum: cumNow });
+  const cutoff = Date.now() - 180000;
+  paceHistory = paceHistory.filter(p => p.t > cutoff);
+
+  const etaEl = document.getElementById('statEta');
+  if(paceHistory.length < 2){ etaEl.textContent = '–'; return; }
+
+  const first = paceHistory[0];
+  const last = paceHistory[paceHistory.length-1];
+  const dt = (last.t - first.t) / 1000;
+  const dCum = last.cum - first.cum;
+
+  if(dt < 15 || dCum <= 0){ etaEl.textContent = '…'; return; }
+
+  const paceMs = dCum / dt;
+  const etaMin = Math.round(remaining / paceMs / 60);
+  etaEl.textContent = etaMin < 60 ? '~' + etaMin + ' min' : '~' + (etaMin/60).toFixed(1) + ' h';
 }
 
 function onPositionError(err){
@@ -345,6 +604,9 @@ function onPositionError(err){
 
 document.getElementById('locateBtn').addEventListener('click', () => {
   if(!navigator.geolocation){ showToast('Prohlížeč nepodporuje geolokaci'); return; }
+  // AudioContext se musí vytvořit v reakci na gesto uživatele (klik) —
+  // jinak by ho Safari později odmítl přehrát zvuk z asynchronního GPS callbacku.
+  audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
   if(watchId === null){
     watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
       enableHighAccuracy: true, maximumAge: 5000, timeout: 15000
