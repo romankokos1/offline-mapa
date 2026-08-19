@@ -62,7 +62,7 @@
   .stat .label{ font-size:9px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; }
   .stat .value{ font-size:15px; color:var(--text); font-variant-numeric: tabular-nums; }
   .stat .value.accent{ color:var(--accent); }
-  .stat .value-sub{ font-size:10px; color:var(--text-dim); margin-top:1px; }
+  .stat .value-sub{ font-size:9px; color:var(--text-dim); margin-top:1px; white-space:nowrap; }
 
   #profileDrawer{
     position:absolute; left:12px; right:12px; bottom:96px; z-index:999;
@@ -72,13 +72,16 @@
   }
   #profileDrawer.show{ display:block; }
   #profileDrawer svg{ display:block; width:100%; height:70px; }
+  #profileLegend{ display:flex; gap:10px; justify-content:center; margin-top:6px; }
+  #profileLegend span{ font-size:9px; color:var(--text-dim); display:flex; align-items:center; gap:3px; }
+  #profileLegend i{ width:8px; height:8px; border-radius:2px; display:inline-block; }
 
-  #btns{ display:flex; gap:8px; }
+  #btns{ display:flex; gap:6px; }
   .btn{
     background:var(--accent-dim); color:#dff5ec; border:1px solid var(--accent);
-    border-radius:8px; padding:10px 12px; font-family:var(--mono); font-size:12px;
+    border-radius:8px; padding:10px; font-family:var(--mono); font-size:12px;
     display:flex; align-items:center; justify-content:center;
-    min-width:44px; min-height:44px;
+    min-width:40px; min-height:40px;
   }
   .btn:active{ background:var(--accent); }
   .btn.secondary{ background:var(--panel); border-color:var(--panel-border); color:var(--text-dim); }
@@ -94,6 +97,13 @@
     width:12px; height:12px; border-radius:2px;
     display:flex; align-items:center; justify-content:center;
     font-size:9px; font-weight:bold; color:#fff;
+  }
+  .km-marker{
+    width:20px; height:20px; border-radius:50%;
+    background:#ffffff; border:2px solid #c026d3;
+    display:flex; align-items:center; justify-content:center;
+    font-size:9px; font-weight:bold; color:#c026d3;
+    box-shadow:0 1px 3px rgba(0,0,0,0.4);
   }
 
   #toast{
@@ -209,6 +219,7 @@
     <label class="btn secondary" for="loadgpx">GPX</label>
     <input type="file" id="loadgpx" accept=".gpx" />
     <div class="btn secondary" id="profileBtn">⛰</div>
+    <div class="btn secondary" id="shareBtn">↗</div>
     <div class="btn" id="locateBtn">◎</div>
   </div>
 </div>
@@ -284,8 +295,9 @@ localLayer.addTo(map);
 localLayer.on('tileerror', showOnlinePrompt);
 
 // ---- Vykreslení trasy ----
-let routeLine = null;
+let routeSegments = [];
 let routeHalo = null;
+let kmMarkers = [];
 let routePoints = [];
 let startMarker = null;
 let endMarker = null;
@@ -407,8 +419,18 @@ function eleGainLoss(points){
   return {gain, loss};
 }
 
+// Barva úseku podle sklonu v %. Modrá = klesání, zelená = rovina, žlutá/červená = stoupání.
+function gradientColor(gradientPct){
+  if(gradientPct <= -12) return '#1d4ed8';   // strmé klesání
+  if(gradientPct <= -5)  return '#60a5fa';   // mírné klesání
+  if(gradientPct < 5)    return '#4fc3a1';   // rovina
+  if(gradientPct < 12)   return '#f59e0b';   // mírné stoupání
+  return '#dc2626';                          // strmé stoupání
+}
+
 function loadRoute(points){
-  if(routeLine) map.removeLayer(routeLine);
+  if(routeSegments.length) routeSegments.forEach(s => map.removeLayer(s));
+  routeSegments = [];
   if(routeHalo) map.removeLayer(routeHalo);
   if(startMarker) map.removeLayer(startMarker);
   if(endMarker) map.removeLayer(endMarker);
@@ -419,7 +441,18 @@ function loadRoute(points){
   // podkladu (zeleném lese, modré vodě...) a nesplývá s červenou/žlutou
   // turistickou značkou na mapě.
   routeHalo = L.polyline(latlngs, { color: '#ffffff', weight: 7, opacity: 0.9 }).addTo(map);
-  routeLine = L.polyline(latlngs, { color: '#c026d3', weight: 4, opacity: 0.95 }).addTo(map);
+
+  // Trasa obarvená po úsecích podle sklonu — zelená rovina, žlutá/červená
+  // stoupání, modrá klesání (čím sytější, tím prudší úsek).
+  for(let i=1;i<points.length;i++){
+    const segDist = haversine([points[i-1][0],points[i-1][1]], [points[i][0],points[i][1]]);
+    const deltaEle = (points[i][2]||0) - (points[i-1][2]||0);
+    const gradient = segDist > 0 ? (deltaEle/segDist)*100 : 0;
+    const seg = L.polyline([latlngs[i-1], latlngs[i]], {
+      color: gradientColor(gradient), weight: 4, opacity: 0.95
+    }).addTo(map);
+    routeSegments.push(seg);
+  }
 
   startMarker = L.marker(latlngs[0], {
     icon: L.divIcon({ className:'', html:'<div class="marker-end" style="background:var(--accent)">A</div>', iconSize:[12,12] })
@@ -428,7 +461,7 @@ function loadRoute(points){
     icon: L.divIcon({ className:'', html:'<div class="marker-end" style="background:var(--red)">B</div>', iconSize:[12,12] })
   }).addTo(map);
 
-  map.fitBounds(routeLine.getBounds(), { padding: [30, 90] });
+  map.fitBounds(L.latLngBounds(latlngs), { padding: [30, 90] });
 
   const km = (routeLength(points)/1000).toFixed(1);
   document.getElementById('statRoute').textContent = km + ' km';
@@ -441,9 +474,33 @@ function loadRoute(points){
 
   computeRouteGeometry(points);
   renderElevationProfile(points);
+  placeKmMarkers(points);
   paceHistory = [];
 
   updateDistanceToEnd();
+}
+
+// Kilometrovníky — malá kolečka s číslem podél trasy, po 1 km.
+// Poloha se dopočítá interpolací mezi dvěma nejbližšími body GPX.
+function placeKmMarkers(points){
+  kmMarkers.forEach(m => map.removeLayer(m));
+  kmMarkers = [];
+  const total = routeCumDist[routeCumDist.length-1] || 0;
+  let nextKm = 1000;
+  for(let i=1;i<points.length && nextKm < total; i++){
+    while(nextKm < total && routeCumDist[i] >= nextKm){
+      const segStart = routeCumDist[i-1], segEnd = routeCumDist[i];
+      const t = segEnd > segStart ? (nextKm - segStart)/(segEnd - segStart) : 0;
+      const lat = points[i-1][0] + t*(points[i][0]-points[i-1][0]);
+      const lon = points[i-1][1] + t*(points[i][1]-points[i-1][1]);
+      const kmNum = Math.round(nextKm/1000);
+      const marker = L.marker([lat, lon], {
+        icon: L.divIcon({ className:'', html:`<div class="km-marker">${kmNum}</div>`, iconSize:[20,20] })
+      }).addTo(map);
+      kmMarkers.push(marker);
+      nextKm += 1000;
+    }
+  }
 }
 
 // ---- Výškový profil ----
@@ -469,7 +526,13 @@ function renderElevationProfile(points){
       <polygon points="${areaPts}" fill="#4fc3a1" opacity="0.15"></polygon>
       <polyline points="${linePts}" fill="none" stroke="#4fc3a1" stroke-width="2"></polyline>
       <line id="profileMarker" x1="${PROFILE_PAD}" y1="0" x2="${PROFILE_PAD}" y2="${PROFILE_H}" stroke="#4a7fd9" stroke-width="2" stroke-dasharray="3,3"></line>
-    </svg>`;
+    </svg>
+    <div id="profileLegend">
+      <span><i style="background:#1d4ed8"></i>klesání</span>
+      <span><i style="background:#4fc3a1"></i>rovina</span>
+      <span><i style="background:#f59e0b"></i>stoupání</span>
+      <span><i style="background:#dc2626"></i>strmé</span>
+    </div>`;
 }
 
 function updateProfileMarker(cumNow){
@@ -611,8 +674,15 @@ function updateEta(cumNow){
   if(dt < 15 || dCum <= 0){ etaEl.textContent = '…'; return; }
 
   const paceMs = dCum / dt;
-  const etaMin = Math.round(remaining / paceMs / 60);
-  etaEl.textContent = etaMin < 60 ? '~' + etaMin + ' min' : '~' + (etaMin/60).toFixed(1) + ' h';
+  const etaSec = remaining / paceMs;
+  const etaMin = Math.round(etaSec / 60);
+  const durText = etaMin < 60 ? '~' + etaMin + ' min' : '~' + (etaMin/60).toFixed(1) + ' h';
+
+  const arrival = new Date(Date.now() + etaSec*1000);
+  const hh = String(arrival.getHours()).padStart(2,'0');
+  const mm = String(arrival.getMinutes()).padStart(2,'0');
+
+  etaEl.textContent = durText + ' · ' + hh + ':' + mm;
 }
 
 function onPositionError(err){
@@ -631,6 +701,26 @@ document.getElementById('locateBtn').addEventListener('click', () => {
     showToast('Sledování polohy zapnuto');
   }
   if(meMarker) map.setView(meMarker.getLatLng(), 16);
+});
+
+// Sdílení aktuální polohy — odkaz na Google Maps, přes nativní sdílecí
+// nabídku telefonu (SMS, WhatsApp, cokoli). Bez GPS fixu to nejde sdílet.
+document.getElementById('shareBtn').addEventListener('click', () => {
+  if(!meMarker){ showToast('Nejdřív zapni polohu tlačítkem ◎'); return; }
+  const {lat, lng} = meMarker.getLatLng();
+  const mapsUrl = `https://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}`;
+  const text = `Moje poloha: ${mapsUrl}`;
+
+  if(navigator.share){
+    navigator.share({ title: 'Moje poloha', text: text }).catch(() => {});
+  } else if(navigator.clipboard){
+    navigator.clipboard.writeText(text).then(
+      () => showToast('Odkaz na polohu zkopírován'),
+      () => showToast('Sdílení se nepodařilo')
+    );
+  } else {
+    showToast('Sdílení není v tomhle prohlížeči podporováno');
+  }
 });
 
 // ---- Online/offline indikátor ----
